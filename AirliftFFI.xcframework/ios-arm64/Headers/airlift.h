@@ -89,6 +89,16 @@ int32_t al_exploit_run(const char *pairing_path,
                         char **out_json,
                         char **out_error);
 
+// Read a PosterBoard sqlite database file or its -wal/-shm companion.
+/// The implementation only accepts paths inside PRBPosterExtensionDataStore
+/// and the PosterBoard database filename. Returns a heap hex string.
+int32_t al_exploit_read_posterboard_file(const char *pairing_path,
+                                          const char *target_file,
+                                          ALLogCallback log_cb,
+                                          void *ctx,
+                                          char **out_hex,
+                                          char **out_error);
+
 // Write all files from `source_dir` into `target_dir` on the device.
 // Returns 0 on success, 1 on error (with out_error set).
 int32_t al_exploit_write_dir(const char *pairing_path,
