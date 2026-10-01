@@ -82,6 +82,14 @@ void al_pairing_result_free(ALPairResult *r);
 // `out_json`     — set to a JSON result string; free with al_string_free().
 // `out_error`    — set on failure; free with al_string_free().
 // Returns 0 if the canary write was confirmed, 1 otherwise.
+// Read a PosterBoard sqlite database file or its -wal/-shm companion.
+int32_t al_exploit_read_posterboard_file(const char *pairing_path,
+                                          const char *target_file,
+                                          ALLogCallback log_cb,
+                                          void *ctx,
+                                          char **out_hex,
+                                          char **out_error);
+
 int32_t al_exploit_run(const char *pairing_path,
                         const char *target,
                         ALLogCallback log_cb,
