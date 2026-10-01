@@ -355,6 +355,7 @@ public final class TendiesEngine {
         var posterBoardDBURL: URL?
         var posterBoardDBTargetParent: String?
         var posterBoardDBLoaded = false
+        var posterBoardInitialWAL: Data?
         if majorVer >= 26 {
             let dbName = "PBFPosterExtensionDataStoreSQLiteDatabase.sqlite3"
             for version in 61...70 {
@@ -394,10 +395,7 @@ public final class TendiesEngine {
                     posterBoardDBTargetParent = parent
                     posterBoardDBLoaded = true
 
-                    if let walData {
-                        let walPath = localDB.path + "-wal"
-                        try walData.write(to: URL(fileURLWithPath: walPath), options: .atomic)
-                    }
+                    posterBoardInitialWAL = walData
                     log("  [DB] Loaded live PosterBoard database from structure (version) ((main.count) bytes)")
                     break
                 } catch {
@@ -465,11 +463,12 @@ public final class TendiesEngine {
                         var dbError: NSString?
                         let ok = PosterBoardDatabase.prepareDatabase(
                             atPath: dbURL.path,
-                            walData: nil,
+                            walData: posterBoardInitialWAL,
                             wallpaperUUID: targetUUID,
                             provider: descItem.ext,
                             error: &dbError
                         )
+                        posterBoardInitialWAL = nil
                         if !ok {
                             throw NSError(
                                 domain: "TendiesEngine",
