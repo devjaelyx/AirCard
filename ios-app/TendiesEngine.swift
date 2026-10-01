@@ -396,7 +396,8 @@ public final class TendiesEngine {
                     posterBoardDBLoaded = true
 
                     posterBoardInitialWAL = walData
-                    versionsToWrite = [version]\n                    log("  [DB] Loaded live PosterBoard database from structure \(version) (\(main.count) bytes)")
+                    versionsToWrite = [version]
+                    log("  [DB] Loaded live PosterBoard database from structure \(version) (\(main.count) bytes)")
                     break
                 } catch {
                     continue
