@@ -42,7 +42,7 @@
     // A stale -shm must never be carried into the rebuilt database.
     [fm removeItemAtPath:shmPath error:nil];
     if (walData.length > 0) {
-        if (![walData writeToFile:walPath options:NSDataWritingAtomic]) {
+        if (![walData writeToFile:walPath options:NSDataWritingAtomic error:nil]) {
             if (error) *error = @"Could not stage PosterBoard WAL";
             return NO;
         }
