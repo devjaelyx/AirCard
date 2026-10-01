@@ -462,8 +462,8 @@ public final class TendiesEngine {
 
                     if majorVer >= 26, let dbURL = posterBoardDBURL {
                         var dbError: NSString?
-                        let ok = PosterBoardDatabase.prepareDatabase(
-                            atPath: dbURL.path,
+                        let ok = PosterBoardDatabase.prepareDatabaseAtPath(
+                            dbURL.path,
                             walData: posterBoardInitialWAL,
                             wallpaperUUID: targetUUID,
                             provider: descItem.ext,
