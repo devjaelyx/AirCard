@@ -113,6 +113,42 @@ pub unsafe extern "C" fn al_exploit_run(
     }
 }
 
+/// Read a PosterBoard sqlite database file (or its -wal/-shm companion) and
+/// return the bytes as a heap-allocated hex string.
+///
+/// The Rust implementation rejects paths outside PRBPosterExtensionDataStore and
+/// rejects filenames other than PBFPosterExtensionDataStoreSQLiteDatabase.sqlite3
+/// and its WAL/SHM companions.
+///
+/// # Safety
+/// All pointer arguments must be null or valid C strings.
+#[no_mangle]
+pub unsafe extern "C" fn al_exploit_read_posterboard_file(
+    pairing_path: *const c_char,
+    target_file: *const c_char,
+    log_cb: exploit::ALLogCallback,
+    ctx: *mut c_void,
+    out_hex: *mut *mut c_char,
+    out_error: *mut *mut c_char,
+) -> i32 {
+    let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        exploit::read_posterboard_file(
+            pairing_path, target_file, log_cb, ctx, out_hex, out_error
+        )
+    }));
+    match res {
+        Ok(rc) => rc,
+        Err(e) => {
+            if !out_error.is_null() {
+                *out_error = ffi_util::cstr(format!(
+                    "Rust panic in al_exploit_read_posterboard_file: {e:?}"
+                ));
+            }
+            1
+        }
+    }
+}
+
 /// Write all files from `source_dir` into `target_dir` outside the sandbox via AirTraffic exploit.
 ///
 /// # Safety
