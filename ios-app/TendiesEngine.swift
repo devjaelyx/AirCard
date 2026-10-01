@@ -240,6 +240,11 @@ public final class TendiesEngine {
     }
 
     // MARK: - Flash Tendies to Device
+        // iOS 27+: PosterBoard requires a live database registration in addition to the filesystem payload.
+        // A database is intentionally required here; never replace the user's live PosterBoard DB with a guessed schema.
+        let posterBoardDB = try PosterBoardDatabase.locateImportedDatabase()
+        log("🗃️ PosterBoard DB: \\(posterBoardDB.lastPathComponent)")
+        let dbSession = try PosterBoardDatabaseSession(databaseURL: posterBoardDB)
 
     public func flashTendies(
         items: [TendieItem],
@@ -300,7 +305,7 @@ public final class TendiesEngine {
             log("  ✨ Found \(descriptors.count) descriptor(s) to install")
 
             for (descIndex, descItem) in descriptors.enumerated() {
-                let targetUUID = UUID().uuidString.uppercased()
+                let targetUUID = UUID().uuidString.uppercased()\n                if majorVer >= 27 { try dbSession.addPoster(uuid: targetUUID, provider: descItem.ext) }
                 let randomizedID = Int.random(in: 10000...99999)
                 log("  [\(descIndex + 1)/\(descriptors.count)] Descriptor \(targetUUID) (ID: \(randomizedID)) for \(descItem.ext)…")
 
@@ -333,6 +338,21 @@ public final class TendiesEngine {
             }
 
             progress(Double(itemIndex + 1) / (totalItems + 1))
+        }
+
+        if majorVer >= 27 {
+            log("🗃️ Registering installed wallpapers in PosterBoard SQLite…")
+            let dbStageDir = FileManager.default.temporaryDirectory.appendingPathComponent("posterboard_db_\\(UUID().uuidString)", isDirectory: true)
+            try FileManager.default.createDirectory(at: dbStageDir, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: dbStageDir) }
+            let stagedDB = try dbSession.finalize(to: dbStageDir)
+            try await writeDirectoryTree(
+                sourceBaseDir: dbStageDir,
+                targetBaseDir: "\\(normalizedContainer)/Library/Application Support/PRBPosterExtensionDataStore/\\(structVersion)",
+                pairingPath: pairingPath,
+                log: log
+            )
+            log("✅ PosterBoard SQLite + empty WAL/SHM staged")
         }
 
         // Always force PosterBoard cache refresh and file protections reset
