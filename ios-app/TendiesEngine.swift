@@ -255,11 +255,7 @@ public final class TendiesEngine {
                         al_exploit_read_posterboard_file(
                             pairC,
                             targetC,
-                            { _, msg in
-                                if let msg {
-                                    log(String(cString: msg))
-                                }
-                            },
+                            nil,
                             nil,
                             &outHex,
                             &outError
