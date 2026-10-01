@@ -239,6 +239,79 @@ public final class TendiesEngine {
         }
     }
 
+    // MARK: - PosterBoard DB bridge
+
+    private func readPosterBoardFile(
+        pairingPath: String,
+        targetPath: String,
+        log: @escaping (String) -> Void
+    ) async throws -> Data {
+        try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                var outHex: UnsafeMutablePointer<CChar>? = nil
+                var outError: UnsafeMutablePointer<CChar>? = nil
+                let rc = pairingPath.withCString { pairC in
+                    targetPath.withCString { targetC in
+                        al_exploit_read_posterboard_file(
+                            pairC,
+                            targetC,
+                            { _, msg in
+                                if let msg {
+                                    log(String(cString: msg))
+                                }
+                            },
+                            nil,
+                            &outHex,
+                            &outError
+                        )
+                    }
+                }
+
+                if let errorPtr = outError {
+                    let message = String(cString: errorPtr)
+                    al_string_free(errorPtr)
+                    continuation.resume(throwing: NSError(
+                        domain: "TendiesEngine",
+                        code: Int(rc),
+                        userInfo: [NSLocalizedDescriptionKey: message]
+                    ))
+                    return
+                }
+
+                guard rc == 0, let hexPtr = outHex else {
+                    continuation.resume(throwing: NSError(
+                        domain: "TendiesEngine",
+                        code: Int(rc),
+                        userInfo: [NSLocalizedDescriptionKey: "PosterBoard database read failed (code (rc))"]
+                    ))
+                    return
+                }
+
+                let hex = String(cString: hexPtr)
+                al_string_free(hexPtr)
+
+                var data = Data()
+                data.reserveCapacity(hex.count / 2)
+                var index = hex.startIndex
+                while index < hex.endIndex {
+                    let next = hex.index(index, offsetBy: 2)
+                    guard next <= hex.endIndex,
+                          let byte = UInt8(hex[index..<next], radix: 16) else {
+                        continuation.resume(throwing: NSError(
+                            domain: "TendiesEngine",
+                            code: -2,
+                            userInfo: [NSLocalizedDescriptionKey: "Invalid PosterBoard database hex data"]
+                        ))
+                        return
+                    }
+                    data.append(byte)
+                    index = next
+                }
+                continuation.resume(returning: data)
+            }
+        }
+    }
+
     // MARK: - Flash Tendies to Device
 
     public func flashTendies(
@@ -274,6 +347,75 @@ public final class TendiesEngine {
         log("ℹ️ Target PosterBoard structure version: \(structVersion) (iOS \(majorVer))")
 
         let totalItems = Double(items.count)
+
+        // iOS 27 PosterBoard does not discover a configuration from the folder
+        // alone. The live PBF database must contain a matching poster row,
+        // role membership and selected marker. Locate the database by filename;
+        // the structure version is not stable across iOS 27.x builds.
+        var posterBoardDBURL: URL?
+        var posterBoardDBTargetParent: String?
+        var posterBoardDBLoaded = false
+        if majorVer >= 26 {
+            let dbName = "PBFPosterExtensionDataStoreSQLiteDatabase.sqlite3"
+            for version in 61...70 {
+                let parent = "(normalizedContainer)/Library/Application Support/PRBPosterExtensionDataStore/(version)"
+                let dbPath = "(parent)/(dbName)"
+                do {
+                    let main = try await readPosterBoardFile(
+                        pairingPath: pairingPath,
+                        targetPath: dbPath,
+                        log: { line in log("  [DB] (line)") }
+                    )
+                    guard main.count > 100, String(data: main.prefix(15), encoding: .ascii) == "SQLite format 3" else {
+                        continue
+                    }
+
+                    let stageDir = FileManager.default.temporaryDirectory
+                        .appendingPathComponent("posterboard_db_(UUID().uuidString)", isDirectory: true)
+                    try FileManager.default.createDirectory(at: stageDir, withIntermediateDirectories: true)
+                    let localDB = stageDir.appendingPathComponent(dbName)
+                    try main.write(to: localDB, options: .atomic)
+
+                    var walData: Data?
+                    do {
+                        walData = try await readPosterBoardFile(
+                            pairingPath: pairingPath,
+                            targetPath: dbPath + "-wal",
+                            log: { line in log("  [DB-WAL] (line)") }
+                        )
+                    } catch {
+                        walData = nil
+                        log("  [DB] No active WAL sidecar; using main database")
+                    }
+
+                    // PosterBoardDatabase merges WAL state, mutates the classic
+                    // PosterBoard tables, checkpoints, and leaves a clean main DB.
+                    posterBoardDBURL = localDB
+                    posterBoardDBTargetParent = parent
+                    posterBoardDBLoaded = true
+
+                    if let walData {
+                        let walPath = localDB.path + "-wal"
+                        try walData.write(to: URL(fileURLWithPath: walPath), options: .atomic)
+                    }
+                    log("  [DB] Loaded live PosterBoard database from structure (version) ((main.count) bytes)")
+                    break
+                } catch {
+                    continue
+                }
+            }
+
+            guard posterBoardDBLoaded,
+                  posterBoardDBURL != nil,
+                  posterBoardDBTargetParent != nil else {
+                throw NSError(
+                    domain: "TendiesEngine",
+                    code: 27,
+                    userInfo: [NSLocalizedDescriptionKey:
+                        "Could not read the live PosterBoard database. No supported PRBPosterExtensionDataStore database was found."]
+                )
+            }
+        }
 
         for (itemIndex, item) in items.enumerated() {
             log("\n📦 [\(itemIndex + 1)/\(items.count)] Processing '\(item.name)'…")
@@ -319,6 +461,26 @@ public final class TendiesEngine {
                         log: log
                     )
 
+                    if majorVer >= 26, let dbURL = posterBoardDBURL {
+                        var dbError: NSString?
+                        let ok = PosterBoardDatabase.prepareDatabase(
+                            atPath: dbURL.path,
+                            walData: nil,
+                            wallpaperUUID: targetUUID,
+                            provider: descItem.ext,
+                            error: &dbError
+                        )
+                        if !ok {
+                            throw NSError(
+                                domain: "TendiesEngine",
+                                code: 28,
+                                userInfo: [NSLocalizedDescriptionKey:
+                                    "PosterBoard DB update failed: (dbError ?? "unknown SQLite error")"]
+                            )
+                        }
+                        log("  🗂 DB registered (targetUUID) → (descItem.ext)")
+                    }
+
                     // On iOS 18+, Collections was migrated to com.apple.Posters.CollectionsPosterApp
                     if descItem.ext == "com.apple.WallpaperKit.CollectionsPoster" {
                         let modernFolder = majorVer >= 26 ? "configurations" : "descriptors"
@@ -335,6 +497,34 @@ public final class TendiesEngine {
             }
 
             progress(Double(itemIndex + 1) / (totalItems + 1))
+        }
+
+        if majorVer >= 26,
+           let dbURL = posterBoardDBURL,
+           let dbParent = posterBoardDBTargetParent {
+            let stageDBDir = FileManager.default.temporaryDirectory
+                .appendingPathComponent("posterboard_db_stage_(UUID().uuidString)", isDirectory: true)
+            try FileManager.default.createDirectory(at: stageDBDir, withIntermediateDirectories: true)
+            let dbName = "PBFPosterExtensionDataStoreSQLiteDatabase.sqlite3"
+            let stagedDB = stageDBDir.appendingPathComponent(dbName)
+            try FileManager.default.copyItem(at: dbURL, to: stagedDB)
+
+            // GoldenNugget's iOS 27 handling explicitly avoids shipping a stale
+            // -shm and ships empty -wal/-shm companions with the consolidated DB.
+            let emptyWal = stageDBDir.appendingPathComponent(dbName + "-wal")
+            let emptyShm = stageDBDir.appendingPathComponent(dbName + "-shm")
+            try Data().write(to: emptyWal, options: .atomic)
+            try Data().write(to: emptyShm, options: .atomic)
+
+            log("  🗃 Writing consolidated PosterBoard database back to (dbParent)…")
+            try await writeDirectoryTree(
+                sourceBaseDir: stageDBDir,
+                targetBaseDir: dbParent,
+                pairingPath: pairingPath,
+                log: log
+            )
+            try? FileManager.default.removeItem(at: stageDBDir)
+            log("  ✅ PosterBoard database + clean WAL/SHM companions injected")
         }
 
         // Always force PosterBoard cache refresh and file protections reset
