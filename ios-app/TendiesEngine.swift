@@ -683,6 +683,16 @@ public final class TendiesEngine {
                 if let data = try? Data(contentsOf: fileURL),
                    var plist = (try? PropertyListSerialization.propertyList(from: data, options: .mutableContainers, format: nil)) as? [String: Any] {
                     plist["wallpaperRepresentingIdentifier"] = randomizedID
+
+                    // iOS 27 PosterBoard also resolves Collection wallpapers through
+                    // wallpaperRepresentingFileName. When cloning a descriptor, the
+                    // old filename points at the source wallpaper and the new
+                    // configuration is therefore ignored even though the UUID,
+                    // database row and descriptor identifier are valid.
+                    if let wallpaperURL = findWallpaperBundle(in: folderURL) {
+                        plist["wallpaperRepresentingFileName"] = wallpaperURL.lastPathComponent
+                    }
+
                     if let updated = try? PropertyListSerialization.data(fromPropertyList: plist, format: .binary, options: 0) {
                         try? updated.write(to: fileURL)
                     }
@@ -697,6 +707,21 @@ public final class TendiesEngine {
                 }
             }
         }
+    }
+
+    private func findWallpaperBundle(in folderURL: URL) -> URL? {
+        guard let enumerator = FileManager.default.enumerator(
+            at: folderURL,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) else { return nil }
+
+        while let url = enumerator.nextObject() as? URL {
+            if url.pathExtension.lowercased() == "wallpaper" {
+                return url
+            }
+        }
+        return nil
     }
 
     // MARK: - Folder Injector Helper (Single Atomic Move via AirTraffic)
