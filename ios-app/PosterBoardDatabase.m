@@ -74,6 +74,7 @@
     if (ok && ![self hasTable:db name:"poster"]) localError = @"PosterBoard DB has no poster table";
     if (ok && ![self hasTable:db name:"posterAttributes"]) localError = @"PosterBoard DB has no posterAttributes table";
     if (ok && ![self hasTable:db name:"posterRoleMembership"]) localError = @"PosterBoard DB has no posterRoleMembership table";
+    if (ok && ![self hasTable:db name:"sqlite_sequence"]) localError = @"PosterBoard DB has no sqlite_sequence table";
     if (ok && localError != nil) ok = NO;
 
     sqlite3_stmt *stmt = NULL;
@@ -113,7 +114,8 @@
         const char *sql =
             "DELETE FROM posterAttributes "
             "WHERE roleId='PRPosterRoleLockScreen' "
-            "AND attributeIdentifier='SELECTED'";
+            "AND attributeIdentifier='SELECTED' "
+            "AND attributePayload=1";
         if (![self exec:db sql:sql error:&localError]) ok = NO;
     }
 
@@ -275,15 +277,54 @@
         sqlite3_finalize(stmt); stmt = NULL;
     }
 
+    if (ok) {
+        // Keep sqlite_sequence aligned with the actual poster table.
+        const char *sql =
+            "UPDATE sqlite_sequence SET seq=? WHERE name='poster'";
+        if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
+            localError = @"Could not prepare PosterBoard sqlite_sequence update";
+            ok = NO;
+        } else {
+            sqlite3_bind_int64(stmt, 1, nextPosterId);
+            if (sqlite3_step(stmt) != SQLITE_DONE) {
+                localError = @"Could not update PosterBoard sqlite_sequence";
+                ok = NO;
+            } else if (sqlite3_changes(db) == 0) {
+                sqlite3_finalize(stmt); stmt = NULL;
+                const char *ins =
+                    "INSERT INTO sqlite_sequence (name,seq) VALUES ('poster',?)";
+                if (sqlite3_prepare_v2(db, ins, -1, &stmt, NULL) != SQLITE_OK) {
+                    localError = @"Could not prepare PosterBoard sqlite_sequence insert";
+                    ok = NO;
+                } else {
+                    sqlite3_bind_int64(stmt, 1, nextPosterId);
+                    if (sqlite3_step(stmt) != SQLITE_DONE) {
+                        localError = @"Could not insert PosterBoard sqlite_sequence";
+                        ok = NO;
+                    }
+                }
+            }
+        }
+        sqlite3_finalize(stmt); stmt = NULL;
+    }
+
     if (ok && ![self exec:db sql:"COMMIT;" error:&localError]) ok = NO;
     if (!ok) [self exec:db sql:"ROLLBACK;" error:nil];
 
     if (ok) {
-        // Consolidate WAL into the main file and switch the delivered image
-        // back to rollback-journal mode. AirCard later ships empty sidecars.
-        [self exec:db sql:"PRAGMA wal_checkpoint(FULL);" error:&localError];
-        if (![self exec:db sql:"PRAGMA journal_mode=DELETE;" error:&localError]) ok = NO;
-        [self exec:db sql:"PRAGMA integrity_check;" error:&localError];
+        // Consolidate the staged live WAL into the main database.
+        if (![self exec:db sql:"PRAGMA wal_checkpoint(FULL);" error:&localError]) ok = NO;
+        if (ok) {
+            sqlite3_stmt *check = NULL;
+            if (sqlite3_prepare_v2(db, "PRAGMA integrity_check;", -1, &check, NULL) != SQLITE_OK ||
+                sqlite3_step(check) != SQLITE_ROW ||
+                strcmp((const char *)sqlite3_column_text(check, 0), "ok") != 0) {
+                localError = @"PosterBoard database integrity check failed";
+                ok = NO;
+            }
+            sqlite3_finalize(check);
+        }
+        // Do NOT change journal_mode here. iOS 27 owns the live journal mode.
     }
 
     sqlite3_close(db);
