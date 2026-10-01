@@ -282,7 +282,7 @@ public final class TendiesEngine {
                     continuation.resume(throwing: NSError(
                         domain: "TendiesEngine",
                         code: Int(rc),
-                        userInfo: [NSLocalizedDescriptionKey: "PosterBoard database read failed (code (rc))"]
+                        userInfo: [NSLocalizedDescriptionKey: "PosterBoard database read failed (code \(rc))"]
                     ))
                     return
                 }
@@ -341,7 +341,7 @@ public final class TendiesEngine {
 
         let majorVer = ProcessInfo.processInfo.operatingSystemVersion.majorVersion
         let structVersion = (majorVer <= 16) ? 59 : 61
-        let versionsToWrite: [Int] = [structVersion]
+        var versionsToWrite: [Int] = [structVersion]
 
         log("🚀 Starting PosterBoard injection into \(normalizedContainer)")
         log("ℹ️ Target PosterBoard structure version: \(structVersion) (iOS \(majorVer))")
@@ -359,20 +359,20 @@ public final class TendiesEngine {
         if majorVer >= 26 {
             let dbName = "PBFPosterExtensionDataStoreSQLiteDatabase.sqlite3"
             for version in 61...70 {
-                let parent = "(normalizedContainer)/Library/Application Support/PRBPosterExtensionDataStore/(version)"
-                let dbPath = "(parent)/(dbName)"
+                let parent = "\(normalizedContainer)/Library/Application Support/PRBPosterExtensionDataStore/\(version)"
+                let dbPath = "\(parent)/\(dbName)"
                 do {
                     let main = try await readPosterBoardFile(
                         pairingPath: pairingPath,
                         targetPath: dbPath,
-                        log: { line in log("  [DB] (line)") }
+                        log: { line in log("  [DB] \(line)") }
                     )
                     guard main.count > 100, String(data: main.prefix(15), encoding: .ascii) == "SQLite format 3" else {
                         continue
                     }
 
                     let stageDir = FileManager.default.temporaryDirectory
-                        .appendingPathComponent("posterboard_db_(UUID().uuidString)", isDirectory: true)
+                        .appendingPathComponent("posterboard_db_\(UUID().uuidString)", isDirectory: true)
                     try FileManager.default.createDirectory(at: stageDir, withIntermediateDirectories: true)
                     let localDB = stageDir.appendingPathComponent(dbName)
                     try main.write(to: localDB, options: .atomic)
@@ -382,7 +382,7 @@ public final class TendiesEngine {
                         walData = try await readPosterBoardFile(
                             pairingPath: pairingPath,
                             targetPath: dbPath + "-wal",
-                            log: { line in log("  [DB-WAL] (line)") }
+                            log: { line in log("  [DB-WAL] \(line)") }
                         )
                     } catch {
                         walData = nil
@@ -396,7 +396,7 @@ public final class TendiesEngine {
                     posterBoardDBLoaded = true
 
                     posterBoardInitialWAL = walData
-                    log("  [DB] Loaded live PosterBoard database from structure (version) ((main.count) bytes)")
+                    versionsToWrite = [version]\n                    log("  [DB] Loaded live PosterBoard database from structure \(version) (\(main.count) bytes)")
                     break
                 } catch {
                     continue
@@ -474,10 +474,10 @@ public final class TendiesEngine {
                                 domain: "TendiesEngine",
                                 code: 28,
                                 userInfo: [NSLocalizedDescriptionKey:
-                                    "PosterBoard DB update failed: (dbError ?? "unknown SQLite error")"]
+                                    "PosterBoard DB update failed: \(dbError ?? "unknown SQLite error")"]
                             )
                         }
-                        log("  🗂 DB registered (targetUUID) → (descItem.ext)")
+                        log("  🗂 DB registered \(targetUUID) → \(descItem.ext)")
                     }
 
                     // On iOS 18+, Collections was migrated to com.apple.Posters.CollectionsPosterApp
@@ -502,7 +502,7 @@ public final class TendiesEngine {
            let dbURL = posterBoardDBURL,
            let dbParent = posterBoardDBTargetParent {
             let stageDBDir = FileManager.default.temporaryDirectory
-                .appendingPathComponent("posterboard_db_stage_(UUID().uuidString)", isDirectory: true)
+                .appendingPathComponent("posterboard_db_stage_\(UUID().uuidString)", isDirectory: true)
             try FileManager.default.createDirectory(at: stageDBDir, withIntermediateDirectories: true)
             let dbName = "PBFPosterExtensionDataStoreSQLiteDatabase.sqlite3"
             let stagedDB = stageDBDir.appendingPathComponent(dbName)
@@ -515,7 +515,7 @@ public final class TendiesEngine {
             try Data().write(to: emptyWal, options: .atomic)
             try Data().write(to: emptyShm, options: .atomic)
 
-            log("  🗃 Writing consolidated PosterBoard database back to (dbParent)…")
+            log("  🗃 Writing consolidated PosterBoard database back to \(dbParent)…")
             try await writeDirectoryTree(
                 sourceBaseDir: stageDBDir,
                 targetBaseDir: dbParent,
